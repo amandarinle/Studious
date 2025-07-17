@@ -9,7 +9,8 @@ import {
   Modal,
   ScrollView,
   Alert,
-  Vibration } from 'react-native';
+  Vibration,
+  StatusBar } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
 interface StudyTechnique {
@@ -153,7 +154,7 @@ export default function StudyScreen() {
       );
     }
     
-    Vibration.vibrate(100); // Haptic feedback
+    Vibration.vibrate(100);
   };
 
   // Pause/Resume study session
@@ -170,23 +171,66 @@ export default function StudyScreen() {
         'This session is quite short. Are you sure you want to log it?',
         [
           { text: 'Continue Studying', style: 'cancel' },
-          { text: 'Log Anyway', onPress: () => openLogModal() },
+          { 
+            text: 'Log Anyway', 
+            onPress: () => {
+              // Reset timer states
+              setIsStudying(false);
+              setIsPaused(false);
+              setElapsedTime(0); // Reset the blue timer display
+              setStudyMode('selection'); // Exit full-screen mode
+              setSelectedRecordingType('none');
+              
+              // Clear the timer interval
+              if (intervalRef.current) {
+                clearInterval(intervalRef.current);
+                intervalRef.current = null;
+              }
+              
+              // Then open the logging modal with the stored duration
+              setSessionData(prev => ({
+                ...prev,
+                duration: Math.floor(elapsedTime / 60), // Use the time before reset
+                recordingType: selectedRecordingType,
+              }));
+              setShowLogModal(true);
+            }
+          },
         ]
       );
     } else {
+      // For longer sessions, just open the modal normally
       openLogModal();
     }
   };
 
   // Open logging modal
   const openLogModal = () => {
+    const currentDuration = Math.floor(elapsedTime / 60);
+    const currentRecordingType = selectedRecordingType;
+    
+    // Reset timer states immediately
+    setIsStudying(false);
+    setIsPaused(false);
+    setElapsedTime(0); // Reset blue timer display
+    setStudyMode('selection'); // Exit any special modes
+    
+    // Clear timer interval
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    
+    // Set session data with the values before reset
     setSessionData(prev => ({
       ...prev,
-      duration: Math.floor(elapsedTime / 60), // Convert to minutes
-      recordingType: selectedRecordingType,
+      duration: currentDuration,
+      recordingType: currentRecordingType,
     }));
+    
     setShowLogModal(true);
   };
+
 
   // Reset timer
   const resetTimer = () => {
@@ -236,18 +280,36 @@ export default function StudyScreen() {
         text: 'Share to Feed',
         onPress: () => {
           console.log('Sharing to feed...');
+          // Reset everything after sharing
+          resetAllStates();
         }
       },
-      { text: 'Done', style: 'default' }
+      { 
+        text: 'Done', 
+        style: 'default',
+        onPress: () => {
+          // Reset everything when done
+          resetAllStates();
+        }
+      }
     ]);
+  };
 
-    // Reset everything
+  // Helper function to reset all states
+  const resetAllStates = () => {
     setShowLogModal(false);
     setIsStudying(false);
     setIsPaused(false);
     setElapsedTime(0);
     setStudyMode('selection');
     setSelectedRecordingType('none');
+    
+    // Clear timer interval
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+    }
+    
+    // Reset session data
     setSessionData({
       subject: '',
       technique: '',
@@ -326,9 +388,97 @@ export default function StudyScreen() {
       </ScrollView>
     </View>
   );
-
   return (
     <View style={styles.container}>
+      {/* Full Screen Timer Modal */}
+      <Modal
+        visible={studyMode === 'active' && selectedRecordingType === 'none'}
+        animationType="fade"
+        presentationStyle="fullScreen"
+      >
+        <StatusBar hidden={true} />
+        <View style={styles.fullScreenTimerModal}>
+          {/* Timer Display */}
+          <View style={styles.fullScreenTimerContent}>
+            <Text style={styles.fullScreenTimeText}>{formatTime(elapsedTime)}</Text>
+            <Text style={styles.fullScreenLabel}>
+              {isPaused ? 'Locked Out' : 'Locked In'}
+            </Text>
+            
+            {/* Optional: Subject display */}
+            {sessionData.subject && (
+              <View style={styles.subjectDisplay}>
+                <Text style={styles.subjectDisplayText}>
+                  {sessionData.subject}
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {/* Minimalist Controls */}
+          <View style={styles.fullScreenControls}>
+            <TouchableOpacity 
+              style={styles.fullScreenControlButton} 
+              onPress={togglePause}
+            >
+              <Ionicons 
+                name={isPaused ? "play" : "pause"} 
+                size={36} 
+                color="white" 
+              />
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={[styles.fullScreenControlButton, styles.stopButtonFull]} 
+              onPress={stopAndLog}
+            >
+              <Ionicons name="stop" size={36} color="white" />
+            </TouchableOpacity>
+          </View>
+
+          {/* Exit button */}
+          <TouchableOpacity 
+            style={styles.exitButton}
+            onPress={() => {
+              Alert.alert(
+                'Exit Focus Mode',
+                'Do you want to stop the timer or keep it running?',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { 
+                    text: 'Keep Timer Running', 
+                    onPress: () => setStudyMode('selection') // Just exit full-screen, keep timer
+                  },
+                  { 
+                    text: 'Stop Timer', 
+                    style: 'destructive',
+                    onPress: () => {
+                      // Stop everything
+                      setStudyMode('selection');
+                      setIsStudying(false);
+                      setIsPaused(false);
+                      setElapsedTime(0);
+                      setSelectedRecordingType('none');
+                      if (intervalRef.current) {
+                        clearInterval(intervalRef.current);
+                      }
+                    }
+                  }
+                ]
+              );
+            }}
+          >
+            <Ionicons name="close" size={24} color="rgba(255, 255, 255, 0.7)" />
+          </TouchableOpacity>
+
+          {/* Swipe indicator */}
+          <View style={styles.swipeIndicator}>
+            <Text style={styles.swipeText}>Swipe up for controls</Text>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Regular Screen Mode */}
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         {/* Timer Section */}
         <View style={styles.timerSection}>
@@ -336,12 +486,11 @@ export default function StudyScreen() {
             <Text style={styles.timerText}>{formatTime(elapsedTime)}</Text>
             <Text style={styles.timerLabel}>
               {studyMode === 'selection' ? 'Ready to study?' : 
-               studyMode === 'recording-options' ? 'Choose recording mode' :
-               !isStudying ? 'Ready to study?' : 
-               isPaused ? 'Paused' : 
-               selectedRecordingType === 'none' ? 'Studying...' :
-               selectedRecordingType === 'timelapse' ? 'Recording time-lapse...' :
-               'Recording for AI evaluation...'}
+              studyMode === 'recording-options' ? 'Choose recording mode' :
+              !isStudying ? 'Ready to study?' : 
+              isPaused ? 'Paused' : 
+              selectedRecordingType === 'timelapse' ? 'Recording time-lapse...' :
+              'Recording for AI evaluation...'}
             </Text>
           </View>
 
@@ -367,9 +516,9 @@ export default function StudyScreen() {
                 <View style={styles.recordingGrid}>
                   <RecordingOptionCard
                     type="none"
-                    title="Standard Session"
-                    description="Focus on studying without any recording distractions"
-                    icon="book-outline"
+                    title="Full-Screen Focus"
+                    description="Immersive full-screen timer for maximum concentration"
+                    icon="eye-off-outline"
                     color="#007AFF"
                   />
 
@@ -387,13 +536,12 @@ export default function StudyScreen() {
                     description="Record yourself explaining concepts for AI analysis and feedback"
                     icon="mic-outline"
                     color="#F59E0B"
-                    // recommended={true}
                   />
                 </View>
               </View>
             )}
 
-            {studyMode === 'active' && isStudying && (
+            {studyMode === 'active' && selectedRecordingType !== 'none' && (
               <View style={styles.activeControls}>
                 <TouchableOpacity style={styles.controlButton} onPress={togglePause}>
                   <Ionicons name={isPaused ? "play" : "pause"} size={20} color="#007AFF" />
@@ -426,27 +574,29 @@ export default function StudyScreen() {
           )}
         </View>
 
-        {/* Study Techniques */}
-        <TechniqueSelector />
+        {/* Study Techniques - only show when not in active mode */}
+        {studyMode !== 'active' && <TechniqueSelector />}
 
-        {/* Quick Stats */}
-        <View style={styles.statsSection}>
-          <Text style={styles.sectionTitle}>Today's Progress</Text>
-          <View style={styles.statsGrid}>
-            <View style={styles.statCard}>
-              <Text style={styles.statValue}>3</Text>
-              <Text style={styles.statLabel}>Sessions</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={styles.statValue}>4h 20m</Text>
-              <Text style={styles.statLabel}>Total Time</Text>
-            </View>
-            <View style={styles.statCard}>
-              <Text style={styles.statValue}>5</Text>
-              <Text style={styles.statLabel}>Day Streak</Text>
+        {/* Quick Stats - only show when not in active mode */}
+        {studyMode !== 'active' && (
+          <View style={styles.statsSection}>
+            <Text style={styles.sectionTitle}>Today's Progress</Text>
+            <View style={styles.statsGrid}>
+              <View style={styles.statCard}>
+                <Text style={styles.statValue}>3</Text>
+                <Text style={styles.statLabel}>Sessions</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={styles.statValue}>4h 20m</Text>
+                <Text style={styles.statLabel}>Total Time</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={styles.statValue}>5</Text>
+                <Text style={styles.statLabel}>Day Streak</Text>
+              </View>
             </View>
           </View>
-        </View>
+        )}
       </ScrollView>
 
       {/* Logging Modal */}
@@ -1033,5 +1183,95 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#333',
     minHeight: 80,
+  },
+  fullScreenTimerModal: {
+  flex: 1,
+  backgroundColor: '#000', // Pure black for maximum focus
+  justifyContent: 'center',
+  alignItems: 'center',
+  paddingHorizontal: 20,
+  position: 'relative',
+  },
+  fullScreenTimerContent: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
+  },
+  fullScreenTimeText: {
+    fontSize: 84,
+    fontWeight: 'bold',
+    color: '#fff',
+    fontFamily: 'monospace',
+    textAlign: 'center',
+    marginBottom: 20,
+    letterSpacing: 2,
+  },
+  fullScreenLabel: {
+    fontSize: 22,
+    color: '#888',
+    textAlign: 'center',
+    marginBottom: 40,
+    fontWeight: '300',
+  },
+  subjectDisplay: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 25,
+    marginTop: 30,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  subjectDisplayText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  fullScreenControls: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 60,
+    gap: 60,
+  },
+  fullScreenControlButton: {
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  stopButtonFull: {
+    backgroundColor: 'rgba(239, 68, 68, 0.8)',
+    borderColor: 'rgba(239, 68, 68, 0.5)',
+  },
+  exitButton: {
+  position: 'absolute',
+  top: 60,
+  right: 20,
+  width: 44,
+  height: 44,
+  borderRadius: 22,
+  backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  justifyContent: 'center',
+  alignItems: 'center',
+  borderWidth: 1,
+  borderColor: 'rgba(255, 255, 255, 0.2)',
+  },
+  swipeIndicator: {
+  position: 'absolute',
+  bottom: 30,
+  left: 0,
+  right: 0,
+  alignItems: 'center',
+  },
+  swipeText: {
+    color: 'rgba(255, 255, 255, 0.5)',
+    fontSize: 12,
+    fontWeight: '300',
   },
 });
