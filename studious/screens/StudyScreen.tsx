@@ -9,9 +9,12 @@ import {
   Modal,
   ScrollView,
   Alert,
-  Vibration,
-  StatusBar } from 'react-native';
+  Vibration, } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import { Video, ResizeMode} from 'expo-av';
+import * as MediaLibrary from 'expo-media-library';
+import { StatusBar } from 'expo-status-bar';
 
 interface StudyTechnique {
   id: string;
@@ -27,6 +30,7 @@ interface StudySession {
   mood: string;
   notes: string;
   recordingType: 'none' | 'timelapse' | 'ai-evaluation';
+  videoUri?: string; // for recordings
 }
 
 type StudyMode = 'selection' | 'recording-options' | 'active';
@@ -96,6 +100,15 @@ export default function StudyScreen() {
   // Refs for timer
   const intervalRef = React.useRef<NodeJS.Timeout | null>(null);
 
+  // Camera and video states
+  const [permission, requestPermission] = useCameraPermissions();
+  const [isRecording, setIsRecording] = React.useState(false);
+  const [recordedVideoUri, setRecordedVideoUri] = React.useState<string | null>(null);
+  const [showVideoPreview, setShowVideoPreview] = React.useState(false);
+
+  // Camera ref
+  const cameraRef = React.useRef<CameraView>(null);
+
   // Timer effect
   React.useEffect(() => {
     if (isStudying && !isPaused) {
@@ -115,6 +128,23 @@ export default function StudyScreen() {
     };
   }, [isStudying, isPaused]);
 
+  // Request camera and media library permissions
+  React.useEffect(() => {
+    const requestPermissions = async () => {
+      if (!permission) {
+        await requestPermission();
+      }
+      
+      // Request media library permissions for saving videos
+      const { status } = await MediaLibrary.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'Please grant media library permissions to save videos');
+      }
+    };
+    
+    requestPermissions();
+  }, [permission, requestPermission]);
+
   // Format time display
   const formatTime = (seconds: number): string => {
     const hours = Math.floor(seconds / 3600);
@@ -132,20 +162,40 @@ export default function StudyScreen() {
     setStudyMode('recording-options');
   };
 
-  // Start study session with selected recording type
-  const startStudyingWithRecording = (recordingType: RecordingType) => {
+// Start study session with selected recording type
+  const startStudyingWithRecording = async (recordingType: RecordingType) => {
     setSelectedRecordingType(recordingType);
     setIsStudying(true);
     setIsPaused(false);
     setStudyMode('active');
     
-    // Show alert based on recording type
     if (recordingType === 'timelapse') {
-      Alert.alert(
-        'Time-lapse Recording Started',
-        'Your study session will be recorded as a time-lapse.',
-        [{ text: 'Got it!' }]
-      );
+      if (!permission?.granted) {
+        Alert.alert('Camera Permission Required', 'Please grant camera permissions for time-lapse recording');
+        await requestPermission();
+        return;
+      }
+      
+      // Start time-lapse recording immediately
+      setTimeout(async () => {
+        if (cameraRef.current) {
+          try {
+            setIsRecording(true);
+            const video = await cameraRef.current.recordAsync({
+              maxDuration: 3600, // 1 hour max
+            });
+            
+            if (video && video.uri) {
+              setRecordedVideoUri(video.uri);
+            }
+          } catch (error) {
+            console.error('Recording failed:', error);
+            Alert.alert('Recording Error', 'Failed to start time-lapse recording');
+            setIsRecording(false);
+          }
+        }
+      }, 500); // Small delay to ensure camera is ready
+      
     } else if (recordingType === 'ai-evaluation') {
       Alert.alert(
         'AI Evaluation Recording Started',
@@ -164,8 +214,18 @@ export default function StudyScreen() {
   };
 
   // Stop and log session
-  const stopAndLog = () => {
-    if (elapsedTime < 60) { // Less than 1 minute
+  const stopAndLog = async () => {
+    // Stop time-lapse recording if active
+    if (isRecording && cameraRef.current) {
+      try {
+        await cameraRef.current.stopRecording();
+        setIsRecording(false);
+      } catch (error) {
+        console.error('Stop recording failed:', error);
+      }
+    }
+    
+    if (elapsedTime < 60) {
       Alert.alert(
         'Short Session',
         'This session is quite short. Are you sure you want to log it?',
@@ -177,37 +237,59 @@ export default function StudyScreen() {
               // Reset timer states
               setIsStudying(false);
               setIsPaused(false);
-              setElapsedTime(0); // Reset the blue timer display
-              setStudyMode('selection'); // Exit full-screen mode
-              setSelectedRecordingType('none');
+              setElapsedTime(0);
+              setStudyMode('selection');
               
-              // Clear the timer interval
+              // Clear timer interval
               if (intervalRef.current) {
                 clearInterval(intervalRef.current);
                 intervalRef.current = null;
               }
               
-              // Then open the logging modal with the stored duration
-              setSessionData(prev => ({
-                ...prev,
-                duration: Math.floor(elapsedTime / 60), // Use the time before reset
-                recordingType: selectedRecordingType,
-              }));
-              setShowLogModal(true);
+              // Show video preview if we have a recording
+              if (recordedVideoUri && selectedRecordingType === 'timelapse') {
+                setShowVideoPreview(true);
+              } else {
+                openLogModal();
+              }
             }
           },
         ]
       );
     } else {
-      // For longer sessions, just open the modal normally
-      openLogModal();
+      // Show video preview if we have a recording, otherwise go to log modal
+      if (recordedVideoUri && selectedRecordingType === 'timelapse') {
+        setShowVideoPreview(true);
+      } else {
+        openLogModal();
+      }
     }
+  };
+
+  // Handle video preview confirmation
+  const handleVideoPreviewDone = () => {
+    setShowVideoPreview(false);
+    setSessionData(prev => ({
+      ...prev,
+      videoUri: recordedVideoUri || '',
+    }));
+    openLogModal(); // Proceed to session logging
+  };
+
+  // Handle video preview retake
+  const handleVideoRetake = () => {
+    setShowVideoPreview(false);
+    setRecordedVideoUri(null);
+    // Restart the recording
+    startStudyingWithRecording('timelapse');
   };
 
   // Open logging modal
   const openLogModal = () => {
     const currentDuration = Math.floor(elapsedTime / 60);
     const currentRecordingType = selectedRecordingType;
+    const currentVideoUri = recordedVideoUri;
+
     
     // Reset timer states immediately
     setIsStudying(false);
@@ -226,6 +308,7 @@ export default function StudyScreen() {
       ...prev,
       duration: currentDuration,
       recordingType: currentRecordingType,
+      videoUri: currentVideoUri || '',
     }));
     
     setShowLogModal(true);
@@ -390,7 +473,75 @@ export default function StudyScreen() {
   );
   return (
     <View style={styles.container}>
-      {/* Full Screen Timer Modal */}
+       {/* Status Bar Control */}
+      <StatusBar 
+        hidden={studyMode === 'active' && (selectedRecordingType === 'none' || selectedRecordingType === 'timelapse')} 
+      />
+      {/* Full Screen Camera for Time-lapse */}
+      <Modal
+        visible={studyMode === 'active' && selectedRecordingType === 'timelapse' && !showVideoPreview}
+        animationType="fade"
+        presentationStyle="fullScreen"
+      >
+        <View style={styles.fullScreenCamera}>
+          {permission?.granted ? (
+            <CameraView
+              ref={cameraRef}
+              style={styles.camera}
+              facing="front"
+              mode="video"
+            >
+              {/* Timer Overlay */}
+              <View style={styles.cameraOverlay}>
+                <View style={styles.timerOverlay}>
+                  <Text style={styles.overlayTimer}>{formatTime(elapsedTime)}</Text>
+                  <Text style={styles.overlayLabel}>
+                    {isRecording ? 'Recording Time-lapse...' : 'Preparing...'}
+                  </Text>
+                </View>
+
+                {/* Recording Indicator */}
+                {isRecording && (
+                  <View style={styles.recordingIndicatorOverlay}>
+                    <View style={styles.recordingDotOverlay} />
+                    <Text style={styles.recordingTextOverlay}>REC</Text>
+                  </View>
+                )}
+
+                {/* Bottom Controls */}
+                <View style={styles.cameraControls}>
+                  <TouchableOpacity 
+                    style={styles.cameraControlButton} 
+                    onPress={togglePause}
+                  >
+                    <Ionicons 
+                      name={isPaused ? "play" : "pause"} 
+                      size={32} 
+                      color="white" 
+                    />
+                  </TouchableOpacity>
+                  
+                  <TouchableOpacity 
+                    style={[styles.cameraControlButton, styles.stopCameraButton]} 
+                    onPress={stopAndLog}
+                  >
+                    <Ionicons name="stop" size={32} color="white" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </CameraView>
+          ) : (
+            <View style={styles.permissionContainer}>
+              <Text style={styles.permissionText}>Camera permission is required</Text>
+              <TouchableOpacity style={styles.permissionButton} onPress={requestPermission}>
+                <Text style={styles.permissionButtonText}>Grant Permission</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      </Modal>
+
+      {/* Full Screen Timer Modal (standard session) */}
       <Modal
         visible={studyMode === 'active' && selectedRecordingType === 'none'}
         animationType="fade"
@@ -474,6 +625,51 @@ export default function StudyScreen() {
           {/* Swipe indicator */}
           <View style={styles.swipeIndicator}>
             <Text style={styles.swipeText}>Swipe up for controls</Text>
+          </View>
+        </View>
+      </Modal>
+      
+      {/* Video Preview Modal */}
+      <Modal
+        visible={showVideoPreview}
+        animationType="slide"
+        presentationStyle="pageSheet"
+      >
+        <View style={styles.videoPreviewContainer}>
+          <View style={styles.videoPreviewHeader}>
+            <Text style={styles.videoPreviewTitle}>Time-lapse Preview</Text>
+            <Text style={styles.videoPreviewSubtitle}>
+              {formatTime(elapsedTime)} study session recorded
+            </Text>
+          </View>
+
+          {recordedVideoUri && (
+            <Video
+              source={{ uri: recordedVideoUri }}
+              style={styles.videoPreview}
+              useNativeControls
+              resizeMode={ResizeMode.CONTAIN}
+              shouldPlay={false}
+              rate={4.0} // time-lapse effect
+            />
+          )}
+
+          <View style={styles.videoPreviewActions}>
+            <TouchableOpacity 
+              style={styles.retakeButton} 
+              onPress={handleVideoRetake}
+            >
+              <Ionicons name="refresh" size={20} color="#666" />
+              <Text style={styles.retakeButtonText}>Retake</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={styles.useVideoButton} 
+              onPress={handleVideoPreviewDone}
+            >
+              <Ionicons name="checkmark" size={20} color="white" />
+              <Text style={styles.useVideoButtonText}>Use This Video</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -621,6 +817,27 @@ export default function StudyScreen() {
             <View style={styles.durationDisplay}>
               <Text style={styles.durationText}>{sessionData.duration} minutes</Text>
               <Text style={styles.durationLabel}>Study Duration</Text>
+              
+              {/* Video Preview in Logging Modal */}
+              {sessionData.videoUri && sessionData.recordingType === 'timelapse' && (
+                <View style={styles.videoPreviewInModal}>
+                  <Video
+                    source={{ uri: sessionData.videoUri }}
+                    style={styles.modalVideoPreview}
+                    useNativeControls={false} // No controls for preview
+                    resizeMode={ResizeMode.COVER}
+                    shouldPlay={true}
+                    isLooping={true}
+                    isMuted={true} // Muted autoplay like social media
+                    rate={4.0} // Time-lapse speed
+                  />
+                  <View style={styles.videoOverlay}>
+                    <Ionicons name="play" size={24} color="rgba(255,255,255,0.8)" />
+                    <Text style={styles.videoOverlayText}>Time-lapse</Text>
+                  </View>
+                </View>
+              )}
+              
               {sessionData.recordingType !== 'none' && (
                 <View style={styles.recordingBadge}>
                   <Ionicons 
@@ -1273,5 +1490,198 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.5)',
     fontSize: 12,
     fontWeight: '300',
+  },
+  // Full-screen camera styles
+  fullScreenCamera: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  camera: {
+    flex: 1,
+  },
+  cameraOverlay: {
+    flex: 1,
+    backgroundColor: 'transparent',
+    justifyContent: 'space-between',
+    padding: 20,
+  },
+  timerOverlay: {
+    alignItems: 'center',
+    marginTop: 60,
+  },
+  overlayTimer: {
+    fontSize: 48,
+    fontWeight: 'bold',
+    color: 'white',
+    fontFamily: 'monospace',
+    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  overlayLabel: {
+    fontSize: 16,
+    color: 'rgba(255, 255, 255, 0.8)',
+    marginTop: 8,
+    textShadowColor: 'rgba(0, 0, 0, 0.75)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  recordingIndicatorOverlay: {
+    position: 'absolute',
+    top: 60,
+    right: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(239, 68, 68, 0.8)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+  },
+  recordingDotOverlay: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: 'white',
+    marginRight: 6,
+  },
+  recordingTextOverlay: {
+    color: 'white',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  cameraControls: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 60,
+    marginBottom: 40,
+  },
+  cameraControlButton: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  stopCameraButton: {
+    backgroundColor: 'rgba(239, 68, 68, 0.8)',
+    borderColor: 'rgba(239, 68, 68, 0.5)',
+  },
+  permissionContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#000',
+    padding: 40,
+  },
+  permissionText: {
+    color: 'white',
+    fontSize: 18,
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  permissionButton: {
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  permissionButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+
+  // Video preview styles
+  videoPreviewContainer: {
+    flex: 1,
+    backgroundColor: 'white',
+  },
+  videoPreviewHeader: {
+    padding: 20,
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  videoPreviewTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  videoPreviewSubtitle: {
+    fontSize: 14,
+    color: '#666',
+    marginTop: 4,
+  },
+  videoPreview: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  videoPreviewActions: {
+    flexDirection: 'row',
+    padding: 20,
+    gap: 16,
+  },
+  retakeButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#666',
+  },
+  retakeButtonText: {
+    color: '#666',
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 6,
+  },
+  useVideoButton: {
+    flex: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 8,
+    backgroundColor: '#007AFF',
+  },
+  useVideoButtonText: {
+    color: 'white',
+    fontSize: 16,
+    fontWeight: '600',
+    marginLeft: 6,
+  },
+  videoPreviewInModal: {
+  width: '100%',
+  height: 120,
+  borderRadius: 12,
+  marginTop: 16,
+  overflow: 'hidden',
+  position: 'relative',
+  },
+  modalVideoPreview: {
+    width: '100%',
+    height: '100%',
+  },
+  videoOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  videoOverlayText: {
+    color: 'rgba(255,255,255,0.8)',
+    fontSize: 12,
+    marginTop: 4,
+    fontWeight: '500',
   },
 });

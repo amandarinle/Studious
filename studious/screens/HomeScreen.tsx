@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { Video, ResizeMode} from 'expo-av';
 
 // Define types for our data structures
 interface StudySession {
@@ -27,6 +28,8 @@ interface StudySession {
   likes: number;
   comments: number;
   isLiked: boolean;
+  videoUri?: string;
+  recordingType?: 'none' | 'timelapse' | 'ai-evaluation';
 }
 
 export default function HomeScreen() {
@@ -184,6 +187,25 @@ export default function HomeScreen() {
           <Text style={styles.notes}>"{session.notes}"</Text>
         )}
       </View>
+      
+      {/* Video Preview in Feed */}
+      {session.videoUri && session.recordingType === 'timelapse' && (
+        <View style={styles.feedVideoContainer}>
+          <Video
+            source={{ uri: session.videoUri }}
+            style={styles.feedVideo}
+            useNativeControls={false}
+            resizeMode={ResizeMode.COVER}
+            shouldPlay={false} // User taps to play
+            isLooping={true}
+            isMuted={true}
+            rate={4.0}
+          />
+          <TouchableOpacity style={styles.playButton}>
+            <Ionicons name="play" size={32} color="white" />
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Action buttons */}
       <View style={styles.actions}>
@@ -419,5 +441,30 @@ const styles = StyleSheet.create({
   loadMoreText: {
     color: 'white',
     fontWeight: '600',
+  },
+  feedVideoContainer: {
+  width: '100%',
+  height: 200,
+  borderRadius: 12,
+  overflow: 'hidden',
+  marginVertical: 12,
+  position: 'relative',
+  backgroundColor: '#000',
+  },
+  feedVideo: {
+    width: '100%',
+    height: '100%',
+  },
+  playButton: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    transform: [{ translateX: -20 }, { translateY: -20 }],
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
