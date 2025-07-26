@@ -199,7 +199,7 @@ export default function HomeScreen() {
             shouldPlay={false} // User taps to play
             isLooping={true}
             isMuted={true}
-            rate={4.0}
+            rate={2.5} // Time-lapse speed
           />
           <TouchableOpacity style={styles.playButton}>
             <Ionicons name="play" size={32} color="white" />

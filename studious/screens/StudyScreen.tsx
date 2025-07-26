@@ -85,6 +85,7 @@ export default function StudyScreen() {
   const [isPaused, setIsPaused] = React.useState(false);
   const [studyMode, setStudyMode] = React.useState<StudyMode>('selection');
   const [selectedRecordingType, setSelectedRecordingType] = React.useState<RecordingType>('none');
+  const [waitingForVideo, setWaitingForVideo] = React.useState(false);
   
   // Session logging state
   const [showLogModal, setShowLogModal] = React.useState(false);
@@ -145,6 +146,22 @@ export default function StudyScreen() {
     requestPermissions();
   }, [permission, requestPermission]);
 
+  // Watch for video URI changes when we're waiting for it
+  React.useEffect(() => {
+    if (waitingForVideo && recordedVideoUri && (selectedRecordingType === 'timelapse' || selectedRecordingType === 'ai-evaluation')) {
+      console.log('Video URI received while waiting, showing preview:', recordedVideoUri);
+      setWaitingForVideo(false);
+      setShowVideoPreview(true);
+    } else if (waitingForVideo && recordedVideoUri === null) {
+      // Still waiting, do nothing
+    } else if (waitingForVideo) {
+      // We were waiting but something went wrong or it's not a recording mode
+      console.log('Was waiting for video but conditions not met, going to log modal');
+      setWaitingForVideo(false);
+      openLogModal();
+    }
+  }, [recordedVideoUri, waitingForVideo, selectedRecordingType]);
+
   // Format time display
   const formatTime = (seconds: number): string => {
     const hours = Math.floor(seconds / 3600);
@@ -162,14 +179,23 @@ export default function StudyScreen() {
     setStudyMode('recording-options');
   };
 
-// Start study session with selected recording type
+  // Start study session with selected recording type
   const startStudyingWithRecording = async (recordingType: RecordingType) => {
     setSelectedRecordingType(recordingType);
     setIsStudying(true);
     setIsPaused(false);
     setStudyMode('active');
     
-    if (recordingType === 'timelapse') {
+    if (recordingType === 'timelapse' || recordingType === 'ai-evaluation') {
+
+      if (recordingType === 'ai-evaluation') { 
+        Alert.alert(
+          'AI Evaluation Recording Started',
+          'Record yourself explaining concepts. The AI will analyze your understanding and provide feedback.',
+          [{ text: 'Start Recording!' }]
+        );
+      }
+
       if (!permission?.granted) {
         Alert.alert('Camera Permission Required', 'Please grant camera permissions for time-lapse recording');
         await requestPermission();
@@ -182,7 +208,7 @@ export default function StudyScreen() {
           try {
             setIsRecording(true);
             const video = await cameraRef.current.recordAsync({
-              maxDuration: 3600, // 1 hour max
+              maxDuration: 86400, // 24 hour max
             });
             
             if (video && video.uri) {
@@ -195,15 +221,7 @@ export default function StudyScreen() {
           }
         }
       }, 500); // Small delay to ensure camera is ready
-      
-    } else if (recordingType === 'ai-evaluation') {
-      Alert.alert(
-        'AI Evaluation Recording Started',
-        'Record yourself explaining concepts. The AI will analyze your understanding and provide feedback.',
-        [{ text: 'Start Recording!' }]
-      );
     }
-    
     Vibration.vibrate(100);
   };
 
@@ -215,16 +233,39 @@ export default function StudyScreen() {
 
   // Stop and log session
   const stopAndLog = async () => {
-    // Stop time-lapse recording if active
+    // Stop recording if active
     if (isRecording && cameraRef.current) {
       try {
+        console.log('Stopping recording...');
         await cameraRef.current.stopRecording();
         setIsRecording(false);
+        console.log('Recording stopped manually');
+        
+        // If we're in a recording mode, wait for the video URI to be set
+        if (selectedRecordingType === 'timelapse' || selectedRecordingType === 'ai-evaluation') {
+          console.log('Setting waitingForVideo to true for recording type:', selectedRecordingType);
+          setWaitingForVideo(true);
+          
+          // Reset timer states now
+          setIsStudying(false);
+          setIsPaused(false);
+          setStudyMode('selection');
+          
+          // Clear timer interval
+          if (intervalRef.current) {
+            clearInterval(intervalRef.current);
+            intervalRef.current = null;
+          }
+          
+          // The useEffect will handle showing the video preview when recordedVideoUri is set
+          return;
+        }
       } catch (error) {
         console.error('Stop recording failed:', error);
       }
     }
     
+    // For non-recording modes, go directly to existing flow
     if (elapsedTime < 60) {
       Alert.alert(
         'Short Session',
@@ -246,23 +287,13 @@ export default function StudyScreen() {
                 intervalRef.current = null;
               }
               
-              // Show video preview if we have a recording
-              if (recordedVideoUri && selectedRecordingType === 'timelapse') {
-                setShowVideoPreview(true);
-              } else {
-                openLogModal();
-              }
+              openLogModal();
             }
           },
         ]
       );
     } else {
-      // Show video preview if we have a recording, otherwise go to log modal
-      if (recordedVideoUri && selectedRecordingType === 'timelapse') {
-        setShowVideoPreview(true);
-      } else {
-        openLogModal();
-      }
+      openLogModal();
     }
   };
 
@@ -281,7 +312,7 @@ export default function StudyScreen() {
     setShowVideoPreview(false);
     setRecordedVideoUri(null);
     // Restart the recording
-    startStudyingWithRecording('timelapse');
+    startStudyingWithRecording(selectedRecordingType);
   };
 
   // Open logging modal
@@ -401,6 +432,8 @@ export default function StudyScreen() {
       notes: '',
       recordingType: 'none',
     });
+
+    setWaitingForVideo(false);
   };
 
   // Recording Option Card Component
@@ -477,9 +510,9 @@ export default function StudyScreen() {
       <StatusBar 
         hidden={studyMode === 'active' && (selectedRecordingType === 'none' || selectedRecordingType === 'timelapse')} 
       />
-      {/* Full Screen Camera for Time-lapse */}
+      {/* Full Screen Camera for Recording modes */}
       <Modal
-        visible={studyMode === 'active' && selectedRecordingType === 'timelapse' && !showVideoPreview}
+        visible={studyMode === 'active' && (selectedRecordingType === 'timelapse' || selectedRecordingType === 'ai-evaluation') && !showVideoPreview}
         animationType="fade"
         presentationStyle="fullScreen"
       >
@@ -496,7 +529,13 @@ export default function StudyScreen() {
                 <View style={styles.timerOverlay}>
                   <Text style={styles.overlayTimer}>{formatTime(elapsedTime)}</Text>
                   <Text style={styles.overlayLabel}>
-                    {isRecording ? 'Recording Time-lapse...' : 'Preparing...'}
+                      {isRecording 
+                        ? (selectedRecordingType === 'timelapse' 
+                            ? 'Recording Time-lapse...' 
+                            : 'Recording for AI Analysis...'
+                          )
+                        : 'Preparing...'
+                      }
                   </Text>
                 </View>
 
@@ -637,7 +676,9 @@ export default function StudyScreen() {
       >
         <View style={styles.videoPreviewContainer}>
           <View style={styles.videoPreviewHeader}>
-            <Text style={styles.videoPreviewTitle}>Time-lapse Preview</Text>
+            <Text style={styles.videoPreviewTitle}>
+              {selectedRecordingType === 'timelapse' ? 'Time-lapse Preview' : 'AI Analysis Preview'}
+            </Text>
             <Text style={styles.videoPreviewSubtitle}>
               {formatTime(elapsedTime)} study session recorded
             </Text>
@@ -650,7 +691,7 @@ export default function StudyScreen() {
               useNativeControls
               resizeMode={ResizeMode.CONTAIN}
               shouldPlay={false}
-              rate={4.0} // time-lapse effect
+              rate={sessionData.recordingType === 'timelapse' ? 2.5 : 1.0} // Time-lapse speed
             />
           )}
 
@@ -819,7 +860,7 @@ export default function StudyScreen() {
               <Text style={styles.durationLabel}>Study Duration</Text>
               
               {/* Video Preview in Logging Modal */}
-              {sessionData.videoUri && sessionData.recordingType === 'timelapse' && (
+              {sessionData.videoUri && (sessionData.recordingType === 'timelapse' || sessionData.recordingType === 'ai-evaluation') && (
                 <View style={styles.videoPreviewInModal}>
                   <Video
                     source={{ uri: sessionData.videoUri }}
@@ -829,11 +870,13 @@ export default function StudyScreen() {
                     shouldPlay={true}
                     isLooping={true}
                     isMuted={true} // Muted autoplay like social media
-                    rate={4.0} // Time-lapse speed
+                    rate={sessionData.recordingType === 'timelapse' ? 2.5 : 1.0} // Time-lapse speed
                   />
                   <View style={styles.videoOverlay}>
                     <Ionicons name="play" size={24} color="rgba(255,255,255,0.8)" />
-                    <Text style={styles.videoOverlayText}>Time-lapse</Text>
+                    <Text style={styles.videoOverlayText}>
+                      {sessionData.recordingType === 'timelapse' ? 'Time-lapse' : 'AI Analysis'}
+                    </Text>
                   </View>
                 </View>
               )}
