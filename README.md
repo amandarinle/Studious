@@ -34,7 +34,7 @@ A social study tracking app that helps students stay motivated, connect with stu
 
 ```bash
 # Clone and install
-git clone https://github.com/yourusername/studious.git
+git clone https://github.com/yourusername/studious.git](https://github.com/amandarinle/Studious
 cd studious
 npm install
 
