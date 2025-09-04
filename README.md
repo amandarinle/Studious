@@ -30,6 +30,22 @@ A social study tracking app that helps students stay motivated, connect with stu
 - Expo Camera & AV
 - Expo Vector Icons
 
+**Project Structure**
+studious/
+├── App.tsx                    # Root component
+├── navigation/
+│   └── AppNavigator.tsx       # Bottom tab navigation
+├── screens/
+│   ├── HomeScreen.tsx         # Social feed
+│   ├── StudyScreen.tsx        # Timer and recording
+│   ├── GroupsScreen.tsx       # Study groups
+│   └── ProfileScreen.tsx      # Profile and stats
+└── package.json
+
+**License**
+MIT License - feel free to use this code for learning purposes.
+Built as a personal project to explore React Native development.
+
 ## Getting Started
 
 ```bash
@@ -44,19 +60,3 @@ npx expo start
 # Run on device
 # Scan QR code with Expo Go app
 # Or press 'i' for iOS simulator, 'a' for Android emulator
-
-Project Structure
-studious/
-├── App.tsx                    # Root component
-├── navigation/
-│   └── AppNavigator.tsx       # Bottom tab navigation
-├── screens/
-│   ├── HomeScreen.tsx         # Social feed
-│   ├── StudyScreen.tsx        # Timer and recording
-│   ├── GroupsScreen.tsx       # Study groups
-│   └── ProfileScreen.tsx      # Profile and stats
-└── package.json
-
-License
-MIT License - feel free to use this code for learning purposes.
-Built as a personal project to explore React Native development.
